@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	cwlgo "../../" // Local import of the cwlgo package
+	cwlgo "github.com/user/cwlgo" // Import using the module path
 )
 
 func main() {
