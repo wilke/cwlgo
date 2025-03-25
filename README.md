@@ -7,7 +7,8 @@ CWLGo is a Go library for parsing and executing Common Workflow Language (CWL) C
 - Parse CWL CommandLineTool descriptions from YAML or JSON files
 - Execute command-line tools with the specified inputs
 - Handle input and output bindings
-- Support for Docker containers (planned)
+- Support for Docker containers
+- Support for Singularity/Apptainer containers
 - Support for environment variables and resource requirements
 
 ## Installation
@@ -96,7 +97,38 @@ make grep-example
 - Basic input and output bindings
 - Environment variables
 - Resource requirements
-- Docker containers (planned)
+- Docker containers
+- Singularity/Apptainer containers
+
+## Container Support
+
+### Docker
+
+CWLGo supports executing tools inside Docker containers when specified in the CWL file using the DockerRequirement:
+
+```yaml
+requirements:
+  DockerRequirement:
+    dockerPull: "ubuntu:20.04"
+```
+
+The executor will automatically:
+- Mount the working directory and output directory
+- Map the command line arguments
+- Handle environment variables
+- Clean up containers after execution
+
+### Singularity/Apptainer
+
+CWLGo also supports Singularity/Apptainer containers:
+
+```yaml
+requirements:
+  SingularityRequirement:
+    singularityPull: "docker://ubuntu:20.04"
+```
+
+The executor will automatically detect whether Singularity or Apptainer is installed on your system.
 
 ## Limitations
 

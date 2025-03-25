@@ -133,6 +133,22 @@ func (r ResourceRequirement) IsRequirement() bool {
 	return true
 }
 
+// SingularityRequirement specifies a Singularity/Apptainer container to use
+type SingularityRequirement struct {
+	Class                string `yaml:"class" json:"class"` // Must be "SingularityRequirement"
+	SingularityPull      string `yaml:"singularityPull,omitempty" json:"singularityPull,omitempty"`
+	SingularityLoad      string `yaml:"singularityLoad,omitempty" json:"singularityLoad,omitempty"`
+	SingularityFile      string `yaml:"singularityFile,omitempty" json:"singularityFile,omitempty"`
+	SingularityImport    string `yaml:"singularityImport,omitempty" json:"singularityImport,omitempty"`
+	SingularityImageID   string `yaml:"singularityImageId,omitempty" json:"singularityImageId,omitempty"`
+	SingularityOutputDir string `yaml:"singularityOutputDirectory,omitempty" json:"singularityOutputDirectory,omitempty"`
+}
+
+// IsRequirement implements the Requirement interface
+func (s SingularityRequirement) IsRequirement() bool {
+	return true
+}
+
 // Error types
 var (
 	ErrInvalidCWL = fmt.Errorf("invalid CWL document")
@@ -158,6 +174,21 @@ func (e *CWLError) Unwrap() error {
 	return e.Err
 }
 
+// ContainerConfig holds configuration for container execution
+type ContainerConfig struct {
+	Type      string   // "docker" or "singularity"
+	Image     string   // Image name or path
+	Pull      bool     // Whether to pull the image
+	Load      string   // Path to image file to load
+	File      string   // Dockerfile or Singularity definition file
+	Import    string   // Path to archive to import
+	ImageID   string   // Explicit image ID
+	OutputDir string   // Output directory inside container
+	Volumes   []string // Additional volumes to mount
+	WorkDir   string   // Working directory inside container
+	EnvVars   []string // Environment variables to set in container
+}
+
 // ExecutionContext holds the context for executing a CommandLineTool
 type ExecutionContext struct {
 	WorkingDir      string
@@ -165,6 +196,7 @@ type ExecutionContext struct {
 	Inputs          map[string]interface{}
 	OutputDir       string
 	EnvironmentVars map[string]string
+	Container       *ContainerConfig // Container configuration if using containers
 }
 
 // NewExecutionContext creates a new execution context
@@ -193,6 +225,7 @@ func NewExecutionContext(workingDir string) (*ExecutionContext, error) {
 		Inputs:          make(map[string]interface{}),
 		OutputDir:       outputDir,
 		EnvironmentVars: make(map[string]string),
+		Container:       nil, // Will be set if container execution is required
 	}, nil
 }
 

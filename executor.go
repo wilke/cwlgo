@@ -9,23 +9,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Executor handles execution of CommandLineTools
 type Executor struct {
 	// Configuration options for the executor
-	DockerEnabled bool
-	MaxCores      int
-	MaxRAM        int64 // in MiB
+	DockerEnabled      bool
+	SingularityEnabled bool
+	MaxCores           int
+	MaxRAM             int64 // in MiB
 	// Add more configuration options as needed
 }
 
 // NewExecutor creates a new executor with default settings
 func NewExecutor() *Executor {
 	return &Executor{
-		DockerEnabled: true,
-		MaxCores:      4,
-		MaxRAM:        8192, // 8 GiB
+		DockerEnabled:      true,
+		SingularityEnabled: true,
+		MaxCores:           4,
+		MaxRAM:             8192, // 8 GiB
 	}
 }
 
@@ -96,11 +99,126 @@ func (e *Executor) processRequirements(tool *CommandLineTool, ctx *ExecutionCont
 					Message: "Docker is required but not enabled",
 				}
 			}
-			// Process Docker requirement
-			// This would involve setting up Docker container execution
-			// For now, we'll just log it
-			dockerPull, _ := reqMap["dockerPull"].(string)
-			fmt.Printf("Docker requirement: %s\n", dockerPull)
+
+			// Create container config for Docker
+			containerConfig := &ContainerConfig{
+				Type:    "docker",
+				Volumes: []string{},
+				EnvVars: []string{},
+			}
+
+			// Process Docker requirement fields
+			if dockerPull, ok := reqMap["dockerPull"].(string); ok && dockerPull != "" {
+				containerConfig.Image = dockerPull
+				containerConfig.Pull = true
+			}
+
+			if dockerLoad, ok := reqMap["dockerLoad"].(string); ok && dockerLoad != "" {
+				containerConfig.Load = dockerLoad
+			}
+
+			if dockerFile, ok := reqMap["dockerFile"].(string); ok && dockerFile != "" {
+				containerConfig.File = dockerFile
+			}
+
+			if dockerImport, ok := reqMap["dockerImport"].(string); ok && dockerImport != "" {
+				containerConfig.Import = dockerImport
+			}
+
+			if dockerImageID, ok := reqMap["dockerImageId"].(string); ok && dockerImageID != "" {
+				containerConfig.ImageID = dockerImageID
+			}
+
+			if dockerOutputDir, ok := reqMap["dockerOutputDirectory"].(string); ok && dockerOutputDir != "" {
+				containerConfig.OutputDir = dockerOutputDir
+			}
+
+			// Validate that at least one image source is specified
+			if containerConfig.Image == "" &&
+				containerConfig.Load == "" &&
+				containerConfig.File == "" &&
+				containerConfig.Import == "" &&
+				containerConfig.ImageID == "" {
+				return &CWLError{
+					Err:     ErrExecution,
+					Message: "Docker requirement must specify at least one of: dockerPull, dockerLoad, dockerFile, dockerImport, or dockerImageId",
+				}
+			}
+
+			// Check if Docker is available
+			if err := checkDockerAvailable(); err != nil {
+				return &CWLError{
+					Err:     err,
+					Message: "Docker is required but not available",
+				}
+			}
+
+			// Store container config in execution context
+			ctx.Container = containerConfig
+
+		case "SingularityRequirement":
+			if !e.SingularityEnabled {
+				return &CWLError{
+					Err:     ErrExecution,
+					Message: "Singularity is required but not enabled",
+				}
+			}
+
+			// Create container config for Singularity
+			containerConfig := &ContainerConfig{
+				Type:    "singularity",
+				Volumes: []string{},
+				EnvVars: []string{},
+			}
+
+			// Process Singularity requirement fields
+			if singularityPull, ok := reqMap["singularityPull"].(string); ok && singularityPull != "" {
+				containerConfig.Image = singularityPull
+				containerConfig.Pull = true
+			}
+
+			if singularityLoad, ok := reqMap["singularityLoad"].(string); ok && singularityLoad != "" {
+				containerConfig.Load = singularityLoad
+			}
+
+			if singularityFile, ok := reqMap["singularityFile"].(string); ok && singularityFile != "" {
+				containerConfig.File = singularityFile
+			}
+
+			if singularityImport, ok := reqMap["singularityImport"].(string); ok && singularityImport != "" {
+				containerConfig.Import = singularityImport
+			}
+
+			if singularityImageID, ok := reqMap["singularityImageId"].(string); ok && singularityImageID != "" {
+				containerConfig.ImageID = singularityImageID
+			}
+
+			if singularityOutputDir, ok := reqMap["singularityOutputDirectory"].(string); ok && singularityOutputDir != "" {
+				containerConfig.OutputDir = singularityOutputDir
+			}
+
+			// Validate that at least one image source is specified
+			if containerConfig.Image == "" &&
+				containerConfig.Load == "" &&
+				containerConfig.File == "" &&
+				containerConfig.Import == "" &&
+				containerConfig.ImageID == "" {
+				return &CWLError{
+					Err:     ErrExecution,
+					Message: "Singularity requirement must specify at least one of: singularityPull, singularityLoad, singularityFile, singularityImport, or singularityImageId",
+				}
+			}
+
+			// Check if Singularity is available
+			if err := checkSingularityAvailable(); err != nil {
+				return &CWLError{
+					Err:     err,
+					Message: "Singularity is required but not available",
+				}
+			}
+
+			// Store container config in execution context
+			ctx.Container = containerConfig
 
 		case "EnvVarRequirement":
 			// Process environment variables
@@ -384,7 +502,12 @@ func (e *Executor) runCommand(ctx context.Context, tool *CommandLineTool, cmdArg
 		}
 	}
 
-	// Create command
+	// Check if we need to run in a container
+	if execCtx.Container != nil {
+		return e.runContainerCommand(ctx, tool, cmdArgs, execCtx)
+	}
+
+	// Create command for direct execution
 	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = execCtx.WorkingDir
 
@@ -537,4 +660,257 @@ func (e *Executor) processOutputs(tool *CommandLineTool, ctx *ExecutionContext, 
 	}
 
 	return outputFiles, nil
+}
+
+// checkDockerAvailable checks if Docker is available on the system
+func checkDockerAvailable() error {
+	cmd := exec.Command("docker", "--version")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker not available: %v - %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// checkSingularityAvailable checks if Singularity/Apptainer is available on the system
+func checkSingularityAvailable() error {
+	// Try singularity first
+	cmd := exec.Command("singularity", "--version")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+
+	// If singularity fails, try apptainer
+	cmd = exec.Command("apptainer", "--version")
+	stderr.Reset()
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("neither singularity nor apptainer available: %v - %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// runContainerCommand executes a command inside a container
+func (e *Executor) runContainerCommand(ctx context.Context, tool *CommandLineTool, cmdArgs []string, execCtx *ExecutionContext) (*ExecuteResult, error) {
+	var containerCmd []string
+	var stdout, stderr bytes.Buffer
+
+	// Prepare container command based on container type
+	switch execCtx.Container.Type {
+	case "docker":
+		// Build Docker command
+		containerCmd = e.buildDockerCommand(cmdArgs, execCtx)
+	case "singularity":
+		// Build Singularity command
+		containerCmd = e.buildSingularityCommand(cmdArgs, execCtx)
+	default:
+		return nil, &CWLError{
+			Err:     ErrExecution,
+			Message: fmt.Sprintf("unsupported container type: %s", execCtx.Container.Type),
+		}
+	}
+
+	// Create command
+	cmd := exec.CommandContext(ctx, containerCmd[0], containerCmd[1:]...)
+	cmd.Dir = execCtx.WorkingDir
+
+	// Set environment variables
+	cmd.Env = os.Environ()
+	for name, value := range execCtx.EnvironmentVars {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", name, value))
+	}
+
+	// Set up stdout and stderr
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Handle stdin if specified
+	if tool.Stdin != "" {
+		stdinFile, err := os.Open(tool.Stdin)
+		if err != nil {
+			return nil, &CWLError{
+				Err:     err,
+				Message: fmt.Sprintf("failed to open stdin file: %s", tool.Stdin),
+			}
+		}
+		defer stdinFile.Close()
+		cmd.Stdin = stdinFile
+	}
+
+	// Handle stdout if specified
+	if tool.Stdout != "" {
+		stdoutPath := filepath.Join(execCtx.OutputDir, tool.Stdout)
+		stdoutFile, err := os.Create(stdoutPath)
+		if err != nil {
+			return nil, &CWLError{
+				Err:     err,
+				Message: fmt.Sprintf("failed to create stdout file: %s", stdoutPath),
+			}
+		}
+		defer stdoutFile.Close()
+
+		// Use MultiWriter to capture stdout both in memory and in file
+		cmd.Stdout = io.MultiWriter(&stdout, stdoutFile)
+	}
+
+	// Handle stderr if specified
+	if tool.Stderr != "" {
+		stderrPath := filepath.Join(execCtx.OutputDir, tool.Stderr)
+		stderrFile, err := os.Create(stderrPath)
+		if err != nil {
+			return nil, &CWLError{
+				Err:     err,
+				Message: fmt.Sprintf("failed to create stderr file: %s", stderrPath),
+			}
+		}
+		defer stderrFile.Close()
+
+		// Use MultiWriter to capture stderr both in memory and in file
+		cmd.Stderr = io.MultiWriter(&stderr, stderrFile)
+	}
+
+	// Run the command
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		// Check if it's an exit error
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+
+			// Check if the exit code is in the success codes
+			isSuccess := false
+			for _, code := range tool.SuccessCodes {
+				if exitCode == code {
+					isSuccess = true
+					break
+				}
+			}
+
+			if isSuccess {
+				// This is a successful exit code
+				err = nil
+			}
+		} else {
+			return nil, &CWLError{
+				Err:     err,
+				Message: "container command execution failed",
+			}
+		}
+	}
+
+	// Clean up container if needed (for Docker)
+	if execCtx.Container.Type == "docker" {
+		e.cleanupDockerContainer(execCtx)
+	}
+
+	return &ExecuteResult{
+		ExitCode: exitCode,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+	}, err
+}
+
+// buildDockerCommand builds a Docker command for executing a tool
+func (e *Executor) buildDockerCommand(cmdArgs []string, execCtx *ExecutionContext) []string {
+	containerCmd := []string{"docker", "run", "--rm"}
+
+	// Add volume mounts
+	containerCmd = append(containerCmd, "-v", fmt.Sprintf("%s:%s", execCtx.WorkingDir, execCtx.WorkingDir))
+	containerCmd = append(containerCmd, "-v", fmt.Sprintf("%s:%s", execCtx.OutputDir, execCtx.OutputDir))
+
+	// Add additional volumes if specified
+	for _, volume := range execCtx.Container.Volumes {
+		containerCmd = append(containerCmd, "-v", volume)
+	}
+
+	// Set working directory
+	containerCmd = append(containerCmd, "-w", execCtx.WorkingDir)
+
+	// Add environment variables
+	for name, value := range execCtx.EnvironmentVars {
+		containerCmd = append(containerCmd, "-e", fmt.Sprintf("%s=%s", name, value))
+	}
+
+	// Add container environment variables if specified
+	for _, env := range execCtx.Container.EnvVars {
+		containerCmd = append(containerCmd, "-e", env)
+	}
+
+	// Add image
+	if execCtx.Container.ImageID != "" {
+		containerCmd = append(containerCmd, execCtx.Container.ImageID)
+	} else {
+		containerCmd = append(containerCmd, execCtx.Container.Image)
+	}
+
+	// Add command and arguments
+	containerCmd = append(containerCmd, cmdArgs...)
+
+	return containerCmd
+}
+
+// buildSingularityCommand builds a Singularity command for executing a tool
+func (e *Executor) buildSingularityCommand(cmdArgs []string, execCtx *ExecutionContext) []string {
+	// Determine if we're using singularity or apptainer
+	singularityCmd := "singularity"
+	if _, err := exec.LookPath("singularity"); err != nil {
+		singularityCmd = "apptainer"
+	}
+
+	containerCmd := []string{singularityCmd, "exec"}
+
+	// Add bind mounts
+	bindMounts := []string{
+		fmt.Sprintf("%s:%s", execCtx.WorkingDir, execCtx.WorkingDir),
+		fmt.Sprintf("%s:%s", execCtx.OutputDir, execCtx.OutputDir),
+	}
+
+	// Add additional volumes if specified
+	for _, volume := range execCtx.Container.Volumes {
+		bindMounts = append(bindMounts, volume)
+	}
+
+	// Join all bind mounts
+	if len(bindMounts) > 0 {
+		containerCmd = append(containerCmd, "--bind", strings.Join(bindMounts, ","))
+	}
+
+	// Set working directory
+	containerCmd = append(containerCmd, "--pwd", execCtx.WorkingDir)
+
+	// Add environment variables
+	for name, value := range execCtx.EnvironmentVars {
+		containerCmd = append(containerCmd, "--env", fmt.Sprintf("%s=%s", name, value))
+	}
+
+	// Add container environment variables if specified
+	for _, env := range execCtx.Container.EnvVars {
+		containerCmd = append(containerCmd, "--env", env)
+	}
+
+	// Add image
+	if execCtx.Container.ImageID != "" {
+		containerCmd = append(containerCmd, execCtx.Container.ImageID)
+	} else {
+		containerCmd = append(containerCmd, execCtx.Container.Image)
+	}
+
+	// Add command and arguments
+	containerCmd = append(containerCmd, cmdArgs...)
+
+	return containerCmd
+}
+
+// cleanupDockerContainer cleans up any Docker containers created during execution
+func (e *Executor) cleanupDockerContainer(execCtx *ExecutionContext) {
+	// This is a placeholder for container cleanup logic
+	// In a real implementation, we would track container IDs and remove them
 }
