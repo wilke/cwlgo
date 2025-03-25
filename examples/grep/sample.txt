@@ -1,0 +1,7 @@
+This is a sample text file.
+It contains multiple lines.
+Some lines contain the word "sample".
+This is used for testing the grep CWL tool.
+The grep tool will search for patterns in this file.
+Another sample line for testing.
+The end of the sample file.

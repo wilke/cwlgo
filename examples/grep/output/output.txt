@@ -1,0 +1,3 @@
+2:It contains multiple lines.
+4:This is used for testing the grep CWL tool.
+5:The grep tool will search for patterns in this file.
