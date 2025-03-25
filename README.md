@@ -13,7 +13,7 @@ CWLGo is a Go library for parsing and executing Common Workflow Language (CWL) C
 ## Installation
 
 ```bash
-go get github.com/user/cwlgo
+go get github.com/wilke/cwlgo
 ```
 
 ## Usage
